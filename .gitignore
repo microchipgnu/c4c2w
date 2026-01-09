@@ -1,2 +1,16 @@
+# Output directory
+out/
+
+# Docker artifacts
+*.tar
+*.tgz
+
+# macOS
 .DS_Store
-out
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+

@@ -1,0 +1,152 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Release WASM Containers
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual workflow to build containers and create a GitHub release
+# Trigger from: Actions → Release WASM Containers → Run workflow
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Release WASM Containers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  IMAGE_NAME: c4c2w:latest
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # container2wasm can be slow
+    
+    permissions:
+      contents: write    # For creating releases
+    
+    steps:
+      - name: Validate tag format
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "⚠️  Warning: Tag '$TAG' doesn't follow semver (vX.Y.Z)"
+            echo "Continuing anyway..."
+          fi
+          echo "Release tag: $TAG"
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Free up disk space
+        run: |
+          # container2wasm needs significant disk space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          df -h
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build c4c2w image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Create output directory
+        run: mkdir -p ./out
+      
+      - name: Run container2wasm conversion
+        run: |
+          echo "🚀 Starting conversion..."
+          docker run --rm --privileged \
+            -v $(pwd)/out:/out \
+            -v /var/lib/docker \
+            -v $(pwd)/config.yaml:/work/config.yaml:ro \
+            ${{ env.IMAGE_NAME }}
+          echo "✅ Conversion complete!"
+      
+      - name: List outputs
+        run: |
+          echo "📦 Output artifacts:"
+          find ./out -type f -name "manifest.json" -exec sh -c '
+            dir=$(dirname "$1")
+            name=$(jq -r ".name" "$1")
+            mode=$(jq -r ".mode" "$1")
+            size=$(jq -r ".total_size" "$1")
+            size_mb=$(echo "scale=2; $size / 1048576" | bc)
+            echo "  • $name ($mode) - ${size_mb}MB"
+            echo "    Files: $(ls -1 "$dir" | wc -l)"
+          ' sh {} \;
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-containers-${{ inputs.release_tag }}
+          path: out/
+          retention-days: 90
+          compression-level: 0
+      
+      - name: Generate release notes
+        run: |
+          {
+            echo "## 📦 WASM Container Artifacts"
+            echo ""
+            echo "**Tag:** \`${{ inputs.release_tag }}\`"
+            echo "**Commit:** \`${{ github.sha }}\`"
+            echo "**Built:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo ""
+            echo "### Containers"
+            echo ""
+            find ./out -type f -name "manifest.json" -exec sh -c '
+              name=$(jq -r ".name" "$1")
+              mode=$(jq -r ".mode" "$1")
+              arch=$(jq -r ".arch // \"amd64\"" "$1")
+              size=$(jq -r ".total_size" "$1")
+              size_mb=$(echo "scale=2; $size / 1048576" | bc)
+              parts=$(jq -r ".parts | length // 1" "$1")
+              echo "| **$name** | \`$arch\` | \`$mode\` | ${size_mb}MB | $parts part(s) |"
+            ' sh {} \;
+            echo ""
+            echo "### Usage"
+            echo ""
+            echo "Download and reassemble WASI containers:"
+            echo ""
+            echo "\`\`\`bash"
+            echo "# Download release assets"
+            echo "gh release download ${{ inputs.release_tag }} -D ./wasm"
+            echo ""
+            echo "# Reassemble"
+            echo "cd wasm/<container-name>"
+            echo "./reassemble.sh output.wasm"
+            echo ""
+            echo "# Run"
+            echo "wasmtime output.wasm"
+            echo "\`\`\`"
+          } > release_notes.md
+          cat release_notes.md
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ inputs.release_tag }}
+          body_path: release_notes.md
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            out/**/*
+          fail_on_unmatched_files: false

@@ -1,11 +1,70 @@
 containers:
-  - name: "amd64-alpine-wasi-bun"
-    arch: "amd64"
-    target: "wasi"
+  - name: opencode-bun-wasi
+    arch: amd64
+    mode: wasi
+    network: true  # Enable networking support
+    output:
+      split_mb: 50
     dockerfile: |
-      FROM alpine:3.17
-      RUN apk add --no-cache curl bash
+      FROM node:20-bookworm-slim
+
+      # minimal runtime deps
+      RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl bash git openssh-client unzip \
+        && rm -rf /var/lib/apt/lists/*
+
+      # install bun (keeps node available for opencode)
       RUN curl -fsSL https://bun.sh/install | bash
       ENV BUN_INSTALL="/root/.bun"
       ENV PATH="${BUN_INSTALL}/bin:${PATH}"
-      CMD ["bash"]
+
+      # pin for reproducibility (change version)
+      ARG OPENCODE_VERSION=0.?.?
+      RUN bun add -g "opencode-ai@${OPENCODE_VERSION}"
+
+      # optional: reduce size (if you don't need runtime installs via bunx)
+      RUN rm -rf /root/.bun/install/cache/*
+
+      WORKDIR /work
+      ENTRYPOINT ["/bin/bash"]
+
+  # - name: opencode-bun-emscripten
+  #   arch: amd64
+  #   mode: emscripten
+  #   dockerfile: |
+  #     FROM node:20-bookworm-slim
+
+  #     RUN apt-get update && apt-get install -y --no-install-recommends \
+  #       ca-certificates curl bash git openssh-client \
+  #       && rm -rf /var/lib/apt/lists/*
+
+  #     RUN curl -fsSL https://bun.sh/install | bash
+  #     ENV BUN_INSTALL="/root/.bun"
+  #     ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
+  #     ARG OPENCODE_VERSION=0.?.?
+  #     RUN bun add -g "opencode-ai@${OPENCODE_VERSION}"
+
+  #     RUN rm -rf /root/.bun/install/cache/*
+
+  #     WORKDIR /work
+  #     ENTRYPOINT ["/bin/bash"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config Schema Reference:
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# containers[]:
+#   name: string          # Required. Unique identifier for the output
+#   arch: string          # Optional. Target architecture (default: "amd64")
+#                         #   Options: amd64, arm64
+#   mode: string          # Optional. Conversion mode (default: "wasi")
+#                         #   Options: wasi, emscripten
+#   image: string         # Source image from registry (mutually exclusive with dockerfile)
+#   dockerfile: string    # Inline Dockerfile content (mutually exclusive with image)
+#   network: boolean      # Optional. Enable networking support (default: false)
+#                         #   When enabled, adds --net=socket flag to c2w
+#   output:
+#     split_mb: number    # Optional. Split WASM into chunks of this size in MB (default: 50)
+#   c2w:
+#     extra_flags: string # Optional. Additional flags to pass to c2w command

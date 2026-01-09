@@ -1,0 +1,96 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Validate Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick validation of config.yaml and Dockerfile syntax
+# Runs on all PRs - faster than full build
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Validate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - 'config.yaml'
+      - 'Dockerfile'
+      - 'entrypoint.sh'
+
+jobs:
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Validate YAML syntax
+        run: |
+          echo "Validating config.yaml..."
+          python3 -c "import yaml; yaml.safe_load(open('config.yaml'))"
+          echo "✅ YAML syntax is valid"
+      
+      - name: Validate config schema
+        run: |
+          echo "Checking required fields..."
+          
+          # Check that containers array exists and has entries
+          containers=$(yq '.containers | length' config.yaml)
+          if [ "$containers" -eq 0 ]; then
+            echo "❌ Error: No containers defined in config.yaml"
+            exit 1
+          fi
+          echo "✅ Found $containers container(s)"
+          
+          # Validate each container entry
+          for i in $(seq 0 $((containers - 1))); do
+            name=$(yq ".containers[$i].name" config.yaml)
+            
+            if [ "$name" == "null" ] || [ -z "$name" ]; then
+              echo "❌ Error: Container at index $i missing 'name' field"
+              exit 1
+            fi
+            
+            image=$(yq ".containers[$i].image" config.yaml)
+            dockerfile=$(yq ".containers[$i].dockerfile" config.yaml)
+            
+            if [ "$image" == "null" ] && [ "$dockerfile" == "null" ]; then
+              echo "❌ Error: Container '$name' must have either 'image' or 'dockerfile'"
+              exit 1
+            fi
+            
+            if [ "$image" != "null" ] && [ "$dockerfile" != "null" ]; then
+              echo "❌ Error: Container '$name' cannot have both 'image' and 'dockerfile'"
+              exit 1
+            fi
+            
+            mode=$(yq ".containers[$i].mode // \"wasi\"" config.yaml)
+            if [ "$mode" != "wasi" ] && [ "$mode" != "emscripten" ]; then
+              echo "❌ Error: Container '$name' has invalid mode '$mode' (must be 'wasi' or 'emscripten')"
+              exit 1
+            fi
+            
+            arch=$(yq ".containers[$i].arch // \"amd64\"" config.yaml)
+            if [ "$arch" != "amd64" ] && [ "$arch" != "arm64" ]; then
+              echo "❌ Error: Container '$name' has invalid arch '$arch' (must be 'amd64' or 'arm64')"
+              exit 1
+            fi
+            
+            echo "✅ Container '$name' ($arch, $mode) is valid"
+          done
+      
+      - name: Validate Dockerfile syntax
+        run: |
+          echo "Validating Dockerfile..."
+          docker build --check .
+          echo "✅ Dockerfile syntax is valid"
+      
+      - name: Check entrypoint.sh
+        run: |
+          echo "Checking entrypoint.sh..."
+          bash -n entrypoint.sh
+          echo "✅ entrypoint.sh syntax is valid"
+

@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dependabot Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Keeps GitHub Actions up to date automatically
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    open-pull-requests-limit: 5
+

@@ -1,47 +1,48 @@
-FROM alpine:latest
+# c4c2w - Container for Container2Wasm
+# Base: Official Docker-in-Docker image (no openrc dance needed)
+FROM docker:27-dind
 
-# Install necessary packages
-RUN apk update && apk add --no-cache \
-    docker \
-    openrc \
+# Tools for config parsing and file operations
+RUN apk add --no-cache \
     bash \
     curl \
-    iptables \
-    e2fsprogs \
-    fuse-overlayfs \
-    linux-headers \
-    util-linux \
-    shadow \
     git \
-    tar \
-    wget \
     jq \
-    yq
+    yq \
+    tar \
+    gzip \
+    coreutils \
+    fuse-overlayfs \
+    ca-certificates
 
-# Install c2w binaries
-ENV C2W_VERSION="v0.6.4"
-RUN wget https://github.com/ktock/container2wasm/releases/download/${C2W_VERSION}/container2wasm-${C2W_VERSION}-linux-amd64.tar.gz && \
-    echo "Downloaded container2wasm-${C2W_VERSION}-linux-amd64.tar.gz" && \
-    tar -xzvf container2wasm-${C2W_VERSION}-linux-amd64.tar.gz && \
-    echo "Extracted container2wasm-${C2W_VERSION}-linux-amd64.tar.gz" && \
-    mv c2w /usr/local/bin/c2w && \
-    echo "Moved c2w to /usr/local/bin/" && \
-    mv c2w-net /usr/local/bin/c2w-net && \
-    echo "Moved c2w-net to /usr/local/bin/" && \
-    rm -rf container2wasm-${C2W_VERSION}-linux-amd64.tar.gz && \
-    echo "Cleaned up downloaded tar.gz file"
+# Install container2wasm (c2w + c2w-net)
+# Detect architecture and download appropriate binary
+ARG C2W_VERSION=v0.8.3
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64) C2W_ARCH="amd64" ;; \
+        aarch64) C2W_ARCH="arm64" ;; \
+        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/c2w.tgz \
+        "https://github.com/ktock/container2wasm/releases/download/${C2W_VERSION}/container2wasm-${C2W_VERSION}-linux-${C2W_ARCH}.tar.gz" \
+ && tar -xzf /tmp/c2w.tgz -C /usr/local/bin c2w c2w-net \
+ && rm -f /tmp/c2w.tgz \
+ && chmod +x /usr/local/bin/c2w /usr/local/bin/c2w-net
 
-# Add docker_entrypoint.sh script
-RUN mkdir -p /usr/local/bin/
-COPY docker_entrypoint.sh /usr/local/bin/docker_entrypoint.sh
-RUN chmod +x /usr/local/bin/docker_entrypoint.sh
+# Docker daemon config: use vfs storage driver for maximum compatibility in nested Docker
+# (slower but works reliably in DinD scenarios)
+RUN mkdir -p /etc/docker \
+ && printf '{\n  "storage-driver": "vfs"\n}\n' > /etc/docker/daemon.json
 
-# Copy the config.yaml file
-COPY config.yaml /usr/local/bin/config.yaml
+WORKDIR /work
 
-# Expose port 8080
-EXPOSE 8080
+COPY config.yaml /work/config.yaml
+COPY entrypoint.sh /work/entrypoint.sh
+RUN chmod +x /work/entrypoint.sh
 
-# Set the entrypoint
-ENTRYPOINT ["/usr/local/bin/docker_entrypoint.sh"]
-CMD ["sh"]
+# /out will be a bind mount from host
+VOLUME ["/out"]
+
+ENTRYPOINT ["/work/entrypoint.sh"]
+
