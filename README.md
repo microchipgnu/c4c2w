@@ -1,3 +1,6 @@
+![](image.png)
+
+
 # c4c2w - Container for Container2Wasm
 
 A Docker-in-Docker container that converts container images to WebAssembly using [container2wasm](https://github.com/ktock/container2wasm).
